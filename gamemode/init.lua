@@ -17,7 +17,7 @@ gameevent.Listen( "player_connect" )
 Core:AddResources()
 
 local function Startup()
-	Core:Boot()
+	Core:LoadSQL()
 end
 hook.Add( "Initialize", "Startup", Startup )
 

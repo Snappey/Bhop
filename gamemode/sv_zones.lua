@@ -72,7 +72,7 @@ function Zones:Reload()
 	
 	Zones.Entities = {}
 	
-	Core:LoadZones()
+	--Core:LoadZones()
 	Zones:Setup()
 end
 

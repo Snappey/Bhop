@@ -1,6 +1,7 @@
 SQL = {}
 SQL.Use = true -- Set this to false if you don't want MySQL, if you want MySQL (for multiple servers, or better management / performance), set it to true
 
+
 if SQL.Use then
 	-- Make sure you have libmysql in your root directory as well as the mysqloo module in your lua/bin folder
 	require( "mysqloo" )
@@ -17,8 +18,25 @@ Core.Try = 0
 util.AddNetworkString( Core.Protocol )
 util.AddNetworkString( Core.Protocol2 )
 
+function Core:LoadSQL()
+	if SQL.Use then
+		print("Loading SQL")
+		if timer.Exists( "SQLCheck" ) then
+			timer.Destroy( "SQLCheck" )
+		end
+		
+		Core:StartSQL()
+		timer.Create( "SQLCheck", 10, 0, Core.SQLCheck )
+	else
+		SQL:LoadNoMySQL()
+		print("Loading no MySQL")
+	end
+end
 
 function Core:Boot()
+
+	print("Loading boot!")
+
 	Command:Init()
 	RTV:Init()
 	
@@ -36,37 +54,30 @@ end
 
 
 function Core:LoadZones()
-	local zones = sql.Query( "SELECT nType, vPos1, vPos2 FROM game_zones WHERE szMap = '" .. game.GetMap() .. "'" )
-	if not zones then return end
-	
-	Zones.Cache = {}
-	for _,data in pairs( zones ) do
-		table.insert( Zones.Cache, {
-			Type = tonumber( data[ "nType" ] ),
-			P1 = util.StringToType( tostring( data[ "vPos1" ] ), "Vector" ),
-			P2 = util.StringToType( tostring( data[ "vPos2" ] ), "Vector" )
-		} )
-	end
+	--	local zones = sql.Query( "SELECT nType, vPos1, vPos2 FROM game_zones WHERE szMap = '" .. game.GetMap() .. "'" )
+	local zones = SQL:Prepare("SELECT nType, vPos1, vPos2 FROM game_zones WHERE szMap = {0}", { game.GetMap() }):Execute( function(data, varArgs, szError)
+		zones = data
+		if not zones then return end
+		Zones.Cache = {}
+		for _,data in pairs( zones ) do
+			table.insert( Zones.Cache, {
+				Type = tonumber( data[ "nType" ] ),
+				P1 = util.StringToType( tostring( data[ "vPos1" ] ), "Vector" ),
+				P2 = util.StringToType( tostring( data[ "vPos2" ] ), "Vector" )
+			} )
+		end
+	end);
+
 end
 
 
 function Core:AwaitLoad( bRetry )
 	if not bRetry then
+
 		Zones:SetupMap()
 		Bot:Setup()
 		Radio:Setup()
 		Core:Optimize()
-		
-		if SQL.Use then
-			if timer.Exists( "SQLCheck" ) then
-				timer.Destroy( "SQLCheck" )
-			end
-			
-			timer.Simple( 0, function() Core:StartSQL() end )
-			timer.Create( "SQLCheck", 10, 0, Core.SQLCheck )
-		else
-			SQL:LoadNoMySQL()
-		end
 	end
 	
 	if #Zones.Cache > 0 then
@@ -75,7 +86,7 @@ function Core:AwaitLoad( bRetry )
 	else
 		if Core.Try < 100 then
 			Core.Try = Core.Try + 1
-			Core:LoadZones()
+			--Core:LoadZones()
 			
 			if #Zones.Cache == 0 then
 				print( "Couldn't load data. Retrying (Try " .. Core.Try .. ")" )
@@ -106,7 +117,8 @@ end
 
 function Core.SQLCheck()
 	if not SQL.Use then return end
-	
+	if (SQL.Connected) then Core:Boot() end
+
 	if (not Admin.Loaded or SQL.Error) and not Core.SQLChecking then
 		SQL.Error = nil
 		Core.SQLChecking = true
@@ -275,7 +287,7 @@ local function SQL_ConnectSuccess( fCallback )
 	SQL.Busy = false
 	
 	SQL_Print( "[SQL Connect] Connected to " .. string.upper( SQLDetails.Host ) .. " successfully (User: " .. string.upper( SQLDetails.User ) .. ")" )
-	
+			Core:Boot()
 	fCallback()
 end
 
@@ -335,6 +347,8 @@ function SQL:CreateObject( SQL_ConnectCallback )
 	SQLObject.onConnected = SQL_SelectCallback
 	SQLObject.onConnectionFailed = SQL_ConnectFailure
 	SQLObject:connect()
+	print("Connecting to SQL;")
+	PrintTable(SQLDetails)
 end	
 	
 function SQL:Prepare( szQuery, varArgs, bNoQuote )

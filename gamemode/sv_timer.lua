@@ -204,7 +204,7 @@ end
 
 -- Records
 
-local RC = {
+RC = {
 	[_C.Style.Normal] = { Total = 0, Count = 0, Average = 0 },
 	[_C.Style.SW] = { Total = 0, Count = 0, Average = 0 },
 	[_C.Style.HSW] = { Total = 0, Count = 0, Average = 0 },
@@ -215,7 +215,7 @@ local RC = {
 	[_C.Style.Bonus] = { Total = 0, Count = 0, Average = 0 }
 }
 
-local TC = {
+TC = {
 	[_C.Style.Normal] = {},
 	[_C.Style.SW] = {},
 	[_C.Style.HSW] = {},
@@ -278,29 +278,45 @@ end
 
 function Timer:LoadRecords()
 	for id,_ in pairs( RC ) do
-		local Query = sql.Query( "SELECT SUM(nTime) AS nSum, COUNT(nTime) AS nCount, AVG(nTime) AS nAverage FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. id )
-		
-		RC[ id ].Total = Core:Assert( Query, "nSum" ) and tonumber( Query[1]["nSum"] ) or 0
-		RC[ id ].Count = Core:Assert( Query, "nCount" ) and tonumber( Query[1]["nCount"] ) or 0
-		RC[ id ].Average = Core:Assert( Query, "nAverage" ) and tonumber( Query[1]["nAverage"] ) or 0
+		--local Query = sql.Query( "SELECT SUM(nTime) AS nSum, COUNT(nTime) AS nCount, AVG(nTime) AS nAverage FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. id )
+	SQL:Prepare("SELECT SUM(nTime) AS nSum, COUNT(nTime) AS nCount, AVG(nTime) AS nAverage FROM game_times WHERE szMap = {0}  AND nStyle = {1}" , { game.GetMap(), id }):Execute( function(data, varArgs, szError)
+		local Query = data
+
+		RC[ id ].Total = tonumber( Query[1]["nSum"] ) or 0
+		RC[ id ].Count = tonumber( Query[1]["nCount"] ) or 0
+		RC[ id ].Average = tonumber( Query[1]["nAverage"] ) or 0
+		print(RC[id].Average, RC[id].Count, RC[id].Total, id)
+	end);
+
 	end
 
-	local Map = sql.Query( "SELECT nMultiplier, nBonusMultiplier, nOptions FROM game_map WHERE szMap = '" .. game.GetMap() .. "'" )
-	if Core:Assert( Map, "nMultiplier" ) then
+	--local Map = sql.Query( "SELECT nMultiplier, nBonusMultiplier, nOptions FROM game_map WHERE szMap = '" .. game.GetMap() .. "'" )
+	SQL:Prepare("SELECT nMultiplier, nBonusMultiplier, nOptions FROM game_map WHERE szMap = {0}", { game.GetMap() }):Execute( function(data, varArgs, szError)
+		local Map = data
+
+		if Core:Assert( Map, "nMultiplier" ) then
 		Timer.Multiplier = tonumber( Core:Null( Map[ 1 ]["nMultiplier"], 1 ) )
 		Timer.BonusMultiplier = tonumber( Core:Null( Map[ 1 ]["nBonusMultiplier"], 1 ) )
 		Timer.Options = tonumber( Core:Null( Map[ 1 ]["nOptions"], 0 ) )
-	end
+		end
+	end);
+
 	
 	for id,_ in pairs( TC ) do
-		local Rec = sql.Query( "SELECT * FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. id .. " ORDER BY nTime ASC" )
+		--local Rec = sql.Query( "SELECT * FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. id .. " ORDER BY nTime ASC" )
+		SQL:Prepare("SELECT * FROM game_times WHERE szMap = {0} AND nStyle = {1} ORDER BY nTime ASC" , { game.GetMap(), id }):Execute( function(data, varArgs, szError)
+			local Query = data
+			Rec = data
+			
+			if Core:Assert( Rec, "szUID" ) then
+				for _a,data in ipairs( Rec ) do
+					table.insert( TC[ id ], { data["szUID"], data["szPlayer"], tonumber( data["nTime"] ), Core:Null( data["szDate"] ), Core:Null( data["vData"] ) } )
+				end
+			end
+		end);		
 		TC[ id ] = {}
 		
-		if Core:Assert( Rec, "szUID" ) then
-			for _a,data in pairs( Rec ) do
-				table.insert( TC[ id ], { data["szUID"], data["szPlayer"], tonumber( data["nTime"] ), Core:Null( data["szDate"] ), Core:Null( data["vData"] ) } )
-			end
-		end
+
 	end
 	
 	for _,id in pairs( _C.Style ) do
@@ -314,28 +330,47 @@ end
 
 function Timer:AddRecord( ply, nTime, nOld )
 	local nAverage = GetAverage( ply.Style )
-
-	local OldEntry = sql.Query( "SELECT nTime FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND szUID = '" .. ply:SteamID() .. "' AND nStyle = " .. ply.Style )
-	if Core:Assert( OldEntry, "nTime" ) then
-		PushTime( ply.Style, nTime, nOld, true )
-		sql.Query( "UPDATE game_times SET szPlayer = " .. sql.SQLStr( ply:Name() ) .. ", nTime = " .. nTime .. ", szDate = '" .. Timer:GetDate() .. "' WHERE szMap = '" .. game.GetMap() .. "' AND szUID = '" .. ply:SteamID() .. "' AND nStyle = " .. ply.Style )
-	else
-		PushTime( ply.Style, nTime, nil, true )
-		sql.Query( "INSERT INTO game_times VALUES ('" .. ply:SteamID() .. "', " .. sql.SQLStr( ply:Name() ) .. ", '" .. game.GetMap() .. "', " .. ply.Style .. ", " .. nTime .. ", 0, NULL, '" .. Timer:GetDate() .. "')" )
-	end
-	
-	Timer:RecalculatePoints( ply.Style )
-	Player:UpdateRank( ply )
-	Player:AddScore( ply )
-	
 	local nID, szID = 1, ""
-	local Rank = sql.Query( "SELECT t1.*, (SELECT COUNT(*) + 1 FROM game_times AS t2 WHERE szMap = '" .. game.GetMap() .. "' AND t2.nTime < t1.nTime AND nStyle = " .. ply.Style .. ") AS nRank FROM game_times AS t1 WHERE t1.szUID = '" .. ply:SteamID() .. "' AND t1.szMap = '" .. game.GetMap() .. "' AND t1.nStyle = " .. ply.Style )
-	if Rank and Rank[ 1 ] and Rank[ 1 ]["nRank"] then
-		nID = tonumber( Rank[ 1 ]["nRank"] )
-	end
+	--local OldEntry = sql.Query( "SELECT nTime FROM game_times WHERE szMap = '" .. game.GetMap() .. "' AND szUID = '" .. ply:SteamID() .. "' AND nStyle = " .. ply.Style )
+		SQL:Prepare("SELECT nTime FROM game_times WHERE szMap = {0} AND szUID = {1} AND nStyle = {2}"  , { game.GetMap(), ply:SteamID(), ply.Style }):Execute( function(data, varArgs, szError)
+			OldEntry = data
+			PrintTable(OldEntry)
+			if Core:Assert( OldEntry, "nTime" ) then
+			PushTime( ply.Style, nTime, nOld, true )
+			--sql.Query( "UPDATE game_times SET szPlayer = " .. sql.SQLStr( ply:Name() ) .. ", nTime = " .. nTime .. ", szDate = '" .. Timer:GetDate() .. "' WHERE szMap = '" .. game.GetMap() .. "' AND szUID = '" .. ply:SteamID() .. "' AND nStyle = " .. ply.Style )
+				SQL:Prepare("UPDATE game_times SET szPlayer = {0}, nTime = {1}, szDate = {2} WHERE szMap = {3} AND szUID = {4} AND nStyle = {5}"  , { sql.SQLStr(ply:Name()), nTime, Timer:GetDate(), game.GetMap(), ply:SteamID(), ply.Style }):Execute( function(data, varArgs, szError)
+					
+				end);	
+			else
+				PushTime( ply.Style, nTime, nil, true )
+				--sql.Query( "INSERT INTO game_times VALUES ('" .. ply:SteamID() .. "', " .. sql.SQLStr( ply:Name() ) .. ", '" .. game.GetMap() .. "', " .. ply.Style .. ", " .. nTime .. ", 0, NULL, '" .. Timer:GetDate() .. "')" )
+				SQL:Prepare("INSERT INTO game_times VALUES ({0}, {1}, {2}, {3}, {4}, 0, NULL, {5})"  , {ply:SteamID(), sql.SQLStr(ply:Name()), game.GetMap(), ply.Style, nTime, Timer:GetDate()  }):Execute( function(data, varArgs, szError)
+					
+				end);
+			end
+				Timer:RecalculatePoints( ply.Style )
+				Player:UpdateRank( ply )
+				Player:AddScore( ply )
 	
-	UpdateRecords( ply, nID, nTime, nOld, Rank )
-	Player:ReloadSubRanks( ply, nAverage )
+				
+				SQL:Prepare("SELECT t1.*, (SELECT COUNT(*) + 1 FROM game_times AS t2 WHERE szMap = {0} AND t2.nTime < t1.nTime AND nStyle = {1}) AS nRank FROM game_times AS t1 WHERE t1.szUID = {2} AND t1.szMap = {3} AND t1.nStyle = {4}"  , {game.GetMap(), ply.Style, ply:SteamID(), game.GetMap(), ply.Style  }):Execute( function(data, varArgs, szError)
+					Rank = data
+					PrintTable(Rank)
+					if Rank and Rank[ 1 ] and Rank[ 1 ]["nRank"] then
+						nID = tonumber( Rank[ 1 ]["nRank"] )
+					end
+
+					UpdateRecords( ply, nID, nTime, nOld, Rank )
+					Player:ReloadSubRanks( ply, nAverage )
+				end);
+		end);		
+
+	
+
+	
+	--local Rank = sql.Query( "SELECT t1.*, (SELECT COUNT(*) + 1 FROM game_times AS t2 WHERE szMap = '" .. game.GetMap() .. "' AND t2.nTime < t1.nTime AND nStyle = " .. ply.Style .. ") AS nRank FROM game_times AS t1 WHERE t1.szUID = '" .. ply:SteamID() .. "' AND t1.szMap = '" .. game.GetMap() .. "' AND t1.nStyle = " .. ply.Style )
+
+
 
 	local Data = { "[" .. Core:StyleName( ply.Style ) .. "] ", "You" }
 	local nRec = GetRecordCount( ply.Style )
@@ -377,8 +412,10 @@ end
 function Timer:AddSpeedData( ply, tab )
 	if ply.Record and ply.Record > 0 and ply.SpeedRequest then
 		local szData = Core.Util:TabToString( { math.floor( tab[ 1 ] ), math.floor( tab[ 2 ] ), Core.Util:GetPlayerJumps( ply ), ply.LastSync or 0 } )
-		sql.Query( "UPDATE game_times SET vData = '" .. szData .. "' WHERE szUID = '" .. ply:SteamID() .. "' AND szMap = '" .. game.GetMap() .. "' AND nStyle = " .. ply.SpeedRequest )
-
+		--sql.Query( "UPDATE game_times SET vData = '" .. szData .. "' WHERE szUID = '" .. ply:SteamID() .. "' AND szMap = '" .. game.GetMap() .. "' AND nStyle = " .. ply.SpeedRequest )
+		SQL:Prepare("UPDATE game_times SET vData = {0} WHERE szUID = {1} AND szMap = {2} AND nStyle = {3}"  , { szData, ply:SteamID(), game.GetMap(), ply.SpeedRequest }):Execute( function(data, varArgs, szError)
+			
+		end);		
 		if ply.SpeedPos and ply.SpeedPos > 0 and TC[ ply.Style ] and TC[ ply.Style ][ ply.SpeedPos ] and TC[ ply.Style ][ ply.SpeedPos ][ 1 ] == ply:SteamID() then
 			TC[ ply.Style ][ ply.SpeedPos ][ 5 ] = Core:Null( szData )
 		end
@@ -388,20 +425,36 @@ end
 function Timer:AddPlays()
 	Timer.PlayCount = 1
 	
-	local Check = sql.Query( "SELECT szMap, nPlays FROM game_map WHERE szMap = '" .. game.GetMap() .. "'" )
+	--local Check = sql.Query( "SELECT szMap, nPlays FROM game_map WHERE szMap = '" .. game.GetMap() .. "'" )
+	SQL:Prepare("SELECT szMap, nPlays FROM game_map WHERE szMap = {0}"  , { game.GetMap() }):Execute( function(data, varArgs, szError)
+		Check = data
+	end);	
 	if Core:Assert( Check, "szMap" ) then
 		Timer.PlayCount = tonumber( Check[ 1 ]["nPlays"] ) + 1
-		sql.Query( "UPDATE game_map SET nPlays = nPlays + 1 WHERE szMap = '" .. game.GetMap() .. "'" )
+		--sql.Query( "UPDATE game_map SET nPlays = nPlays + 1 WHERE szMap = '" .. game.GetMap() .. "'" )
+		SQL:Prepare("UPDATE game_map SET nPlays = nPlays + 1 WHERE szMap = {0}"  , { game.GetMap() }):Execute( function(data, varArgs, szError)
+
+		end);	
 	end
 end
 
 function Timer:RecalculatePoints( nStyle )
 	local nMult = Timer:GetMultiplier( nStyle )
-	sql.Query( "UPDATE game_times SET nPoints = " .. nMult .. " * (" .. GetAverage( nStyle ) .. " / nTime) WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle )
-	
+	--sql.Query( "UPDATE game_times SET nPoints = " .. nMult .. " * (" .. GetAverage( nStyle ) .. " / nTime) WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle )
+		CalcAverage(nStyle)
+		print(GetAverage(nStyle), nStyle)
+		SQL:Prepare("UPDATE game_times SET nPoints = {0} * ({1} / nTime) WHERE szMap = {2} AND nStyle = {3}"  , { nMult, GetAverage(nStyle), game.GetMap(), nStyle }):Execute( function(data, varArgs, szError) -- Need to fix the second argument to use GetAverage(nStyle)
+
+		end);	
 	local nFourth, nDouble = nMult / 4, nMult * 2
-	sql.Query( "UPDATE game_times SET nPoints = " .. nDouble .. " WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle .. " AND nPoints > " .. nDouble )
-	sql.Query( "UPDATE game_times SET nPoints = " .. nFourth .. " WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle .. " AND nPoints < " .. nFourth )
+	--sql.Query( "UPDATE game_times SET nPoints = " .. nDouble .. " WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle .. " AND nPoints > " .. nDouble )
+		SQL:Prepare("UPDATE game_times SET nPoints = {0} WHERE szMap = {1} AND nStyle = {2} AND nPoints > {3}"  , { nDouble, game.GetMap(), nStyle, nDouble }):Execute( function(data, varArgs, szError)
+
+		end);	
+	--sql.Query( "UPDATE game_times SET nPoints = " .. nFourth .. " WHERE szMap = '" .. game.GetMap() .. "' AND nStyle = " .. nStyle .. " AND nPoints < " .. nFourth )
+		SQL:Prepare("UPDATE game_times SET nPoints = {0} WHERE szMap = {1} AND nStyle = {2} AND nPoints < {3}"  , { nFourth, game.GetMap(), nStyle, nFourth }):Execute( function(data, varArgs, szError)
+
+		end);	
 end
 
 function Timer:RecalculateInitial( id )
